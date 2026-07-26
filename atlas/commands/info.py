@@ -68,5 +68,9 @@ def run(args) -> int:
         # Wrap once, ourselves, and tell rich not to wrap the result again.
         width = min(88, ui.console.width)
         ui.console.print()
-        ui.console.print(textwrap.fill(summary[:900], width=width), soft_wrap=True)
+        # markup=False: this is arbitrary prose from yfinance, and rich would
+        # read any "[...]" in it as a style tag and drop it.
+        ui.console.print(
+            textwrap.fill(summary[:900], width=width), soft_wrap=True, markup=False
+        )
     return 0

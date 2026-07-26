@@ -121,7 +121,11 @@ def confirm(prompt: str = "Confirm?") -> bool:
         warn("stdin is not a terminal -- declining automatically.")
         return False
     try:
-        answer = console.input(f"{prompt} [y/n]: ").strip().lower()
+        # markup=False is required, not cosmetic: rich parses square brackets as
+        # style tags, so "[y/n]" is silently swallowed and the prompt renders as
+        # "Confirm? : ". Escaping as "\\[y/n]" also works but is easy to lose in
+        # a later edit.
+        answer = console.input(f"{prompt} [y/n]: ", markup=False).strip().lower()
     except (EOFError, KeyboardInterrupt):
         console.print()
         return False
