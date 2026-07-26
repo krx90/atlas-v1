@@ -111,7 +111,7 @@ def sell_summary(
     console.print()
 
 
-def confirm(prompt: str = "Confirm? [y/n]") -> bool:
+def confirm(prompt: str = "Confirm?") -> bool:
     """Ask for [y/n]. Anything other than y/yes is a no.
 
     A non-interactive stdin declines rather than hanging or defaulting to yes,
