@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "atlas"
+version = "0.1.0"
+description = "Kronos-scored asset lookup and paper-trading CLI on the Alpaca API"
+requires-python = ">=3.10"
+dependencies = [
+    "alpaca-py>=0.33",
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "torch>=2.0",
+    "einops==0.8.1",
+    "huggingface_hub>=0.33",
+    "safetensors>=0.4",
+    "tqdm>=4.67",
+    "python-dotenv>=1.0",
+    "rich>=13.7",
+    "plotly>=5.22",
+    "yfinance>=0.2.40",
+    "feedparser>=6.0",
+]
+
+[project.scripts]
+atlas = "atlas.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["atlas*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

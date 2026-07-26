@@ -1,0 +1,16 @@
+creds.env
+
+vendor/
+data/
+top30_assets.csv
+
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+.DS_Store

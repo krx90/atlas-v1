@@ -1,0 +1,18 @@
+# Reproduce the Atlas environment:
+#
+#   conda env create -f environment.yml
+#   conda activate atlas
+#   git clone --depth 1 https://github.com/shiyu-coder/Kronos vendor/kronos
+#   pip install -e .
+#
+# Conda supplies only the interpreter. Everything else comes from pip: the
+# `defaults` channel does not carry a current arm64 torch or alpaca-py, and the
+# official PyTorch wheels from PyPI are the supported path for Apple-Silicon MPS.
+name: atlas
+channels:
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - -r requirements.txt
