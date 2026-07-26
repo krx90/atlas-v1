@@ -16,7 +16,7 @@ from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 from .. import bars, config, db, forecast, results, scoring, ui, universe
 
 
-def _collect_requests(conn, rows, limit: int | None, horizon: int):
+def _collect_requests(conn, rows, limit: int | None, horizon: int, lookback: int):
     """Partition the universe into model-ready inputs and recorded skips."""
     symbols = [r["symbol"] for r in rows]
     if limit:
@@ -28,17 +28,17 @@ def _collect_requests(conn, rows, limit: int | None, horizon: int):
 
     for symbol in symbols:
         available = counts.get(symbol, 0)
-        if available < config.LOOKBACK:
-            skipped.append((symbol, f"only {available} bars cached, need {config.LOOKBACK}"))
+        if available < lookback:
+            skipped.append((symbol, f"only {available} bars cached, need {lookback}"))
             continue
 
-        frame = bars.load(conn, symbol, limit=config.LOOKBACK)
+        frame = bars.load(conn, symbol, limit=lookback)
         history = forecast.prepare_history(frame)
         if history.isnull().values.any():
             skipped.append((symbol, "NaNs in cached bars"))
             continue
-        if len(history) != config.LOOKBACK:
-            skipped.append((symbol, f"loaded {len(history)} bars, need {config.LOOKBACK}"))
+        if len(history) != lookback:
+            skipped.append((symbol, f"loaded {len(history)} bars, need {lookback}"))
             continue
         closes = history["close"].to_numpy()
         last_close = float(closes[-1])
@@ -97,6 +97,14 @@ def run(args) -> int:
     horizon = args.horizon or config.HORIZON
     paths = args.paths or config.PATHS
 
+    # Resolve the checkpoint first: the lookback follows the model's context
+    # window, and requests are built before the engine exists.
+    choice = getattr(args, "model", None) or "small"
+    model_name, tokenizer_name, context = config.MODEL_CHOICES[choice]
+    # Five years of daily bars is ~1250, so a 2048-context model (mini) cannot
+    # fill its window. Cap at what the cache can actually supply.
+    lookback = min(context, config.MAX_LOOKBACK)
+
     with db.connect() as conn:
         rows, rebuilt = universe.get(conn, force_rebuild=args.rebuild_universe)
         names = {r["symbol"]: (r["name"] or "") for r in rows}
@@ -124,7 +132,7 @@ def run(args) -> int:
             )
         ui.info(f"{label}: {written:,} bars written across {fetched} symbols")
 
-        requests, skipped = _collect_requests(conn, rows, args.limit, horizon)
+        requests, skipped = _collect_requests(conn, rows, args.limit, horizon, lookback)
 
     if not requests:
         ui.error("no symbols have enough cached history to forecast.")
@@ -132,7 +140,11 @@ def run(args) -> int:
         return 1
 
     try:
-        engine = forecast.KronosEngine()
+        engine = forecast.KronosEngine(
+            model_name=model_name,
+            tokenizer_name=tokenizer_name,
+            max_context=context,
+        )
     except forecast.KronosUnavailable as exc:
         ui.error(str(exc))
         return 2

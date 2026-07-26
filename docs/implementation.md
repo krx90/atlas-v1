@@ -191,6 +191,38 @@ previous calendar day for part of the year.
 
 ## 5. Forecasting
 
+### Checkpoint choice: bigger is worse here
+
+`atlas scan --model {mini,small,base}` selects the checkpoint; the lookback follows the model's
+context window. `Kronos-large` is listed upstream but is **not published** (its HF repo returns
+401), so `base` is the ceiling.
+
+`small` is the default on measured evidence, not convenience. On 40 identical symbols at 25
+paths and a 5-day horizon:
+
+| | Kronos-small (24.7M) | Kronos-base (102.3M) |
+|---|---|---|
+| scored | 33/40 | **13/40** |
+| rejected | 18% | **68%** |
+| median raw `mu` | −3.34% | **−27.25%** |
+| median &#124;mu&#124; / realized vol | **1.06** | **4.80** |
+| `sigma` / realized vol | 1.16 | 0.88 |
+| seconds per symbol | **2.43** | 9.67 |
+| projected 600 symbols | **24m** | 97m |
+
+Base is four times slower *and* two-thirds of its output is unusable. Its median forecast is a
+−27% five-day move at 4.8× realized volatility — the central tendency, not a tail. Rank
+agreement where both survive is Spearman ρ = +0.62, so base broadly agrees with small when it
+works; it just fails far more often.
+
+The likely cause: base ships with `attn_dropout_p: 0.0` and `token_dropout_p: 0.0` against
+small's `0.1`/`0.1`. It is a sharper, less-regularised model, so on daily bars — out of
+distribution for a model pretrained mostly on intraday K-lines — it is more *confidently* wrong.
+Scale amplifies the normalization pathology of §6 rather than overcoming it.
+
+`base` remains available behind the flag, since this is one market snapshot at one horizon and
+one sampling temperature, not a general claim about the checkpoint.
+
 ### One load per process
 
 `KronosEngine.__init__` calls `from_pretrained` exactly once, sets `eval()`, and hands both

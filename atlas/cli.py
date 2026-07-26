@@ -25,6 +25,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="force a full asset sweep and history reseed",
     )
+    scan.add_argument(
+        "--model",
+        choices=("mini", "small", "base"),
+        help="Kronos checkpoint (default small). base is ~4x slower per symbol",
+    )
 
     sub.add_parser("portfolio", help="show account balance and open positions")
     sub.add_parser("orders", help="show open orders")

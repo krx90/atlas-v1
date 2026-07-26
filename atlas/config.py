@@ -69,8 +69,24 @@ RATE_LIMIT_PER_MINUTE = 200
 
 KRONOS_MODEL = "NeoQuasar/Kronos-small"
 KRONOS_TOKENIZER = "NeoQuasar/Kronos-Tokenizer-base"
+
+#: Selectable checkpoints: (model, tokenizer, context). `Kronos-large` is listed
+#: upstream but is not published -- the HF repo returns 401.
+#:
+#: Measured on MPS at 25 paths / 5-day horizon: small 2.43 s/symbol (24m for
+#: 600), base 9.67 s/symbol (97m). Base is 3.99x the cost, matching its
+#: parameter ratio. `mini` pairs with the 2k tokenizer for a 2048-bar context.
+MODEL_CHOICES = {
+    "mini": ("NeoQuasar/Kronos-mini", "NeoQuasar/Kronos-Tokenizer-2k", 2048),
+    "small": ("NeoQuasar/Kronos-small", "NeoQuasar/Kronos-Tokenizer-base", 512),
+    "base": ("NeoQuasar/Kronos-base", "NeoQuasar/Kronos-Tokenizer-base", 512),
+}
 #: Kronos-small's context window, and therefore the required bar history.
 LOOKBACK = 512
+#: Ceiling on the lookback regardless of a model's context window. Five years of
+#: daily bars is roughly 1250, so `mini`'s 2048-bar context cannot be filled;
+#: this keeps the requirement to something the cache can actually supply.
+MAX_LOOKBACK = 1000
 #: Trading days ahead to forecast.
 HORIZON = 5
 #: Monte Carlo paths sampled per symbol.
