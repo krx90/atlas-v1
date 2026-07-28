@@ -527,7 +527,7 @@ the five signals work regardless.
 
 ### The KV cache, in production
 
-This is the first caller to use `atlas/kv_cache.py`. Profiling showed **89% of
+`scan`, `backtest` and `review` all use `atlas/kv_cache.py`. Profiling showed **89% of
 scan time in `model.decode_s1`**, which re-reads the entire context at every
 autoregressive step -- 5 x 25 x 512 = 64,000 token-positions through 8 layers to
 produce 25 new tokens per step.
@@ -551,6 +551,48 @@ A fourth was found only by comparing against the uncached path:
 unlike `decode_s1` it cannot be fed only the newest token. The full context is
 accumulated instead, which is exact because a causal transformer never revises an
 earlier position when a later one is appended.
+
+### What enabling it cost
+
+Measured on 40 symbols, same universe:
+
+| | s/symbol | scored | 600 symbols |
+|---|---|---|---|
+| uncached, 512-bar lookback | 3.14 | 31/36 | ~31 min |
+| cached, 507-bar lookback | 0.86 | 28/36 | **~9 min** |
+
+**3.3x faster, but the ranking is not identical** -- rank correlation +0.83
+against the uncached run, with the top 10 unchanged (10/10 overlap) and three
+symbols (LRCX, MU, SMH -- all semiconductors, the artifact-prone group) passing
+the plausibility guard at 512 bars but not at 507.
+
+That is *not* cache inexactness. The gate test proves identical output for
+identical input. It is 507 bars being genuinely different input from 512.
+
+**Which is itself worth noticing.** A 1% change in the input window moves the
+ranking to rho = 0.83. A signal that sensitive to a trivial change in history is
+not tracking anything robust -- consistent with the backtests finding no
+detectable skill, and a reason to distrust fine distinctions in the middle of the
+ranking.
+
+`--no-cache` keeps the 512-bar reference path available on both `scan` and
+`backtest`.
+
+### The seed was not stable, and the docs said it was
+
+Found while measuring the above: two *identical* scans returned rank correlation
+0.94 with **zero** identical scores. The per-symbol seed was
+`abs(hash(symbols))`, and **Python randomises string hashing per process** -- so
+`hash(("NVDA",))` differed on every run. Scans were never reproducible, while
+this document claimed they were.
+
+Now `zlib.crc32`, which is stable across processes and machines. Verified: two
+runs give 28/28 identical scores, rho = +1.0000. Two tests pin it, one of which
+asserts that `hash()` *is* unstable so the fix cannot be quietly reverted.
+
+The lesson is that the reproducibility claim was never tested -- it was asserted
+in a docstring and believed. The control run that caught it existed only because
+a suspicious rho = 0.86 needed explaining.
 
 **Multi-threading does not help and fp16 is slower.** Measured on MPS: 745 ms at
 4 threads, 776 at 1, 786 at 8, 782 at 10 -- the transformer runs on the GPU, so

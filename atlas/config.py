@@ -92,6 +92,19 @@ LOOKBACK = 512
 MAX_LOOKBACK = 1000
 #: Trading days ahead to forecast.
 HORIZON = 5
+
+
+def data_lookback(context: int, horizon: int, *, cached: bool) -> int:
+    """Bars of history to feed the model, given its context window.
+
+    Uncached, the lookback can fill the whole context. Cached, it must leave
+    room for the generated bars: Kronos slides its context buffer once the
+    sequence exceeds `max_context`, and that shifts every cached key's position,
+    silently invalidating the cache. Stated once here rather than recomputed at
+    each call site. See `kv_cache.check_fits`, which enforces it.
+    """
+    usable = context - horizon if cached else context
+    return min(usable, MAX_LOOKBACK)
 #: Monte Carlo paths sampled per symbol.
 PATHS = 25
 #: Symbols per forward pass. Each contributes `PATHS` sequences, so the default

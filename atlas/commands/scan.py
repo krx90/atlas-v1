@@ -110,9 +110,11 @@ def run(args) -> int:
     # window, and requests are built before the engine exists.
     choice = getattr(args, "model", None) or "small"
     model_name, tokenizer_name, context = config.MODEL_CHOICES[choice]
-    # Five years of daily bars is ~1250, so a 2048-context model (mini) cannot
-    # fill its window. Cap at what the cache can actually supply.
-    lookback = min(context, config.MAX_LOOKBACK)
+    # The KV cache needs room to generate inside the context window, so the
+    # lookback is `context - horizon` when caching. Also capped: five years of
+    # daily bars is ~1250, so mini's 2048-bar context cannot be filled.
+    cached = not getattr(args, "no_cache", False)
+    lookback = config.data_lookback(context, horizon, cached=cached)
 
     with db.connect() as conn:
         rows, rebuilt = universe.get(conn, force_rebuild=args.rebuild_universe)
@@ -153,6 +155,7 @@ def run(args) -> int:
             model_name=model_name,
             tokenizer_name=tokenizer_name,
             max_context=context,
+            use_cache=cached,
         )
     except forecast.KronosUnavailable as exc:
         ui.error(str(exc))

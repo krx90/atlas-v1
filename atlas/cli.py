@@ -35,6 +35,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="force a full asset sweep and history reseed",
     )
     scan.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="use the slower uncached decoder (the cache's reference implementation)",
+    )
+    scan.add_argument(
         "--model",
         choices=("mini", "small", "base"),
         help="Kronos checkpoint (default small). base is ~4x slower per symbol",
@@ -51,6 +56,9 @@ def build_parser() -> argparse.ArgumentParser:
     bt.add_argument("--symbols", type=int, default=100, help="symbols to test (default 100)")
     bt.add_argument("--horizon", type=int, help="forward window in sessions (default 5)")
     bt.add_argument("--paths", type=int, help="Monte Carlo paths (default 25)")
+    bt.add_argument(
+        "--no-cache", action="store_true", help="use the slower uncached decoder"
+    )
     bt.add_argument(
         "--timeframe",
         choices=("5Min", "15Min", "1Hour"),

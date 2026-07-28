@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import sys
 import time
+import zlib
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Callable, Iterator
@@ -240,8 +241,14 @@ class KronosEngine:
         `SYMBOLS_PER_BATCH` and reproducibility becomes conditional on the
         grouping instead, since the seed then depends on which symbols share a
         pass.
+
+        **Not `hash()`**: Python randomises string hashing per process, so
+        `hash(("NVDA",))` differs on every run. This silently made scans
+        irreproducible while the docstring claimed otherwise -- two identical
+        runs came out at rank correlation 0.94 with zero identical scores. CRC32
+        is stable across processes and machines.
         """
-        digest = abs(hash(symbols)) % (2**31)
+        digest = zlib.crc32("|".join(symbols).encode()) & 0x7FFFFFFF
         self._torch.manual_seed(config.SEED ^ digest)
         if self.device.startswith("cuda"):
             self._torch.cuda.manual_seed_all(config.SEED ^ digest)

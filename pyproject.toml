@@ -31,3 +31,6 @@ include = ["atlas*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# `-m "not slow"` skips the tests that load the model. Run the gate explicitly
+# with `pytest -m slow` before shipping a change to the decoder.
+markers = ["slow: loads the Kronos model (seconds, not milliseconds)"]

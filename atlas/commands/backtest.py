@@ -46,7 +46,8 @@ def run(args) -> int:
     horizon = args.horizon or config.HORIZON
     paths = args.paths or config.PATHS
     side = args.side or scoring.LONG
-    lookback = config.LOOKBACK
+    cached = not getattr(args, "no_cache", False)
+    lookback = config.data_lookback(config.LOOKBACK, horizon, cached=cached)
     timeframe = getattr(args, "timeframe", None)
     unit = "day" if timeframe is None else timeframe
 
@@ -131,7 +132,7 @@ def run(args) -> int:
     beat(dates[0], 0)
 
     try:
-        engine = forecast.KronosEngine()
+        engine = forecast.KronosEngine(use_cache=cached)
     except forecast.KronosUnavailable as exc:
         ui.error(str(exc))
         heartbeat.unlink(missing_ok=True)
@@ -171,11 +172,16 @@ def run(args) -> int:
     out = config.DATA_DIR / f"backtest_{side}_{tag}_{horizon}.csv"
     with out.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh)
-        writer.writerow(["date", "symbol", "score", "mu", "forward_return"])
+        writer.writerow([
+            "date", "symbol", "score", "mu", "forward_return",
+            "sigma", "q05", "q95", "p_up",
+        ])
         for o in obs:
-            writer.writerow(
-                [o.date, o.symbol, f"{o.score:.6f}", f"{o.mu:.6f}", f"{o.forward_return:.6f}"]
-            )
+            writer.writerow([
+                o.date, o.symbol, f"{o.score:.6f}", f"{o.mu:.6f}",
+                f"{o.forward_return:.6f}", f"{o.sigma:.6f}",
+                f"{o.q05:.6f}", f"{o.q95:.6f}", f"{o.p_up:.3f}",
+            ])
 
     ui.console.print()
     ui.info(f"  per-date IC: " + ", ".join(f"{d[5:]} {v:+.2f}" for d, v, _n in result.ic_by_date))

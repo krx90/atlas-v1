@@ -45,6 +45,7 @@ Flags:
 --paths N            Monte Carlo paths per symbol (default 25)
 --horizon N          trading days to forecast (default 5)
 --rebuild-universe   force a full asset sweep and history reseed
+--no-cache           slower uncached decoder, 512-bar lookback (reference path)
 ```
 
 

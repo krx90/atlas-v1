@@ -48,7 +48,14 @@ from . import bars, config, forecast, scoring
 
 @dataclass
 class Observation:
-    """One symbol, one as-of date: what was predicted and what happened."""
+    """One symbol, one as-of date: what was predicted and what happened.
+
+    The dispersion fields are what make *calibration* measurable, as distinct
+    from skill. Skill asks whether the ranking predicts direction; calibration
+    asks whether the forecast distribution was the right width -- does the
+    realized return fall below `q05` about 5% of the time? Recording only `mu`
+    left that unanswerable, which is why these are here.
+    """
 
     date: str
     symbol: str
@@ -56,6 +63,10 @@ class Observation:
     mu: float
     side: str
     forward_return: float
+    sigma: float = 0.0
+    q05: float = 0.0
+    q95: float = 0.0
+    p_up: float = 0.0
 
 
 @dataclass
@@ -201,6 +212,10 @@ def observations(
                     mu=score.mu,
                     side=side,
                     forward_return=futures[symbol_paths.symbol],
+                    sigma=score.sigma,
+                    q05=score.q05,
+                    q95=score.q95,
+                    p_up=score.p_up,
                 )
             )
 
@@ -282,4 +297,62 @@ def evaluate(obs: list[Observation], *, decile: float = 0.1) -> Result:
         hit_rate=float(np.mean([s > 0 for s in spreads])) if spreads else float("nan"),
         top_return=float(np.mean(tops)) if tops else float("nan"),
         bottom_return=float(np.mean(bottoms)) if bottoms else float("nan"),
+    )
+
+
+@dataclass
+class Coverage:
+    """Was the forecast distribution the right *width*?
+
+    Distinct from skill. Skill asks whether the ranking predicts direction;
+    calibration asks whether the stated uncertainty was honest. A well-calibrated
+    forecast puts 5% of realized outcomes below its own 5th percentile and 5%
+    above its 95th -- so `below_q05` near 0.05 means the downside tail is right,
+    and materially above 0.05 means the distribution is too narrow.
+
+    This is the measurement that decides whether dispersion needs scaling, and it
+    cannot be faked by a model with no skill: a directionless forecast can still
+    be perfectly calibrated, and a skilful one can still be overconfident.
+    """
+
+    n: int
+    below_q05: float  # target 0.05
+    above_q95: float  # target 0.05
+    inside: float  # target 0.90
+    mean_sigma: float
+    mean_abs_error: float
+
+    @property
+    def verdict(self) -> str:
+        tails = self.below_q05 + self.above_q95
+        if self.n < 100:
+            return "too few observations to judge"
+        if tails > 0.16:
+            return "distribution too narrow -- outcomes land outside the tails too often"
+        if tails < 0.04:
+            return "distribution too wide -- outcomes rarely reach the tails"
+        return "well calibrated"
+
+
+def coverage(obs: list[Observation]) -> Coverage:
+    """Empirical tail coverage of the forecast distributions."""
+    usable = [o for o in obs if o.sigma > 0]
+    if not usable:
+        return Coverage(0, float("nan"), float("nan"), float("nan"), float("nan"), float("nan"))
+
+    actual = np.array([o.forward_return for o in usable])
+    q05 = np.array([o.q05 for o in usable])
+    q95 = np.array([o.q95 for o in usable])
+    sigma = np.array([o.sigma for o in usable])
+    mu = np.array([o.mu for o in usable])
+
+    below = float(np.mean(actual < q05))
+    above = float(np.mean(actual > q95))
+    return Coverage(
+        n=len(usable),
+        below_q05=below,
+        above_q95=above,
+        inside=1.0 - below - above,
+        mean_sigma=float(np.mean(sigma)),
+        mean_abs_error=float(np.mean(np.abs(actual - mu))),
     )
