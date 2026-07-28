@@ -111,3 +111,40 @@ def test_an_unknown_timeframe_is_refused():
 
     with pytest.raises(ValueError, match="unsupported timeframe"):
         fetch_intraday(["AAPL"], "2Min", start=None)
+
+
+# --- HuggingFace cache probe --------------------------------------------------
+#
+# Loading passes local_files_only=True when the weights are already cached, which
+# skips a hub round-trip (~0.9s per run) and silences the "unauthenticated
+# requests to the HF Hub" warning. A fresh machine must still be able to download.
+
+
+def test_a_cached_repo_is_detected():
+    from unittest.mock import patch
+    with patch("huggingface_hub.try_to_load_from_cache", return_value="/some/path/model.safetensors"):
+        from atlas.forecast import _is_cached
+        assert _is_cached("NeoQuasar/Kronos-small") is True
+
+
+def test_an_uncached_repo_is_not_detected():
+    from unittest.mock import patch
+    from atlas.forecast import _is_cached
+    with patch("huggingface_hub.try_to_load_from_cache", return_value=None):
+        assert _is_cached("NeoQuasar/Kronos-nonexistent") is False
+
+
+def test_the_sentinel_for_a_known_missing_file_is_not_a_hit():
+    """try_to_load_from_cache returns a sentinel object, not a path, for those."""
+    from unittest.mock import patch
+    from atlas.forecast import _is_cached
+    with patch("huggingface_hub.try_to_load_from_cache", return_value=object()):
+        assert _is_cached("NeoQuasar/Kronos-small") is False
+
+
+def test_a_failing_probe_falls_back_to_online():
+    """The probe is an optimisation -- it must never block a model load."""
+    from unittest.mock import patch
+    from atlas.forecast import _is_cached
+    with patch("huggingface_hub.try_to_load_from_cache", side_effect=OSError("cache unreadable")):
+        assert _is_cached("NeoQuasar/Kronos-small") is False

@@ -89,6 +89,25 @@ def realized_vol(closes: np.ndarray, horizon: int, window: int = 250) -> float:
     return float(np.std(log_returns) * np.sqrt(horizon))
 
 
+def _is_cached(repo_id: str) -> bool:
+    """Are this repo's weights already in the local HuggingFace cache?
+
+    Checked so loading can pass `local_files_only=True` when there is nothing to
+    download. That skips a hub round-trip on every run -- worth ~0.9s of startup,
+    and it silences the `unauthenticated requests to the HF Hub` warning, which
+    is emitted purely because the check happens at all. A fresh machine with an
+    empty cache still downloads normally.
+    """
+    try:
+        from huggingface_hub import try_to_load_from_cache  # noqa: PLC0415
+    except ImportError:
+        return False
+    try:
+        return isinstance(try_to_load_from_cache(repo_id, "model.safetensors"), str)
+    except Exception:  # noqa: BLE001 -- a cache probe must never block a load
+        return False
+
+
 def _import_kronos():
     """Import the vendored Kronos package, with an actionable error if absent."""
     model_dir = config.KRONOS_DIR
@@ -182,8 +201,13 @@ class KronosEngine:
         self.device = device
 
         started = time.perf_counter()
-        tokenizer = KronosTokenizer.from_pretrained(tokenizer_name)
-        model = Kronos.from_pretrained(model_name)
+        # Only when both are already cached: mixing a cached model with an
+        # uncached tokenizer would fail the load rather than fetch the missing
+        # half, so the two are decided together.
+        offline = _is_cached(model_name) and _is_cached(tokenizer_name)
+        opts = {"local_files_only": True} if offline else {}
+        tokenizer = KronosTokenizer.from_pretrained(tokenizer_name, **opts)
+        model = Kronos.from_pretrained(model_name, **opts)
         tokenizer.eval()
         model.eval()
         # KronosPredictor moves both to the device. This is the only transfer;

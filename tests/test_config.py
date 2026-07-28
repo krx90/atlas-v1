@@ -81,3 +81,70 @@ def test_whitespace_around_values_is_stripped(creds_file):
     creds, _ = load_credentials()
     assert creds.key_id == "PK123"
     assert creds.secret_key == "abc"
+
+
+# --- optional HuggingFace token -----------------------------------------------
+#
+# Unlike the Alpaca keys this is optional: it only affects cold-cache downloads.
+# Once the weights are local, Atlas loads with local_files_only and never uses it.
+
+
+def test_no_token_is_not_an_error(creds_file, monkeypatch):
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    creds_file.write_text(PAPER)
+    assert config.load_hf_token() == (None, None)
+    assert config.apply_hf_token() is None
+
+
+def test_a_token_is_read_and_published(creds_file, monkeypatch):
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    creds_file.write_text(PAPER + "HF_TOKEN=hf_abcdef123456\n")
+
+    token, warning = config.load_hf_token()
+    assert token == "hf_abcdef123456"
+    assert warning is None
+
+    assert config.apply_hf_token() == "hf_abcdef123456"
+    import os
+    assert os.environ["HF_TOKEN"] == "hf_abcdef123456"
+
+
+def test_a_malformed_token_warns_but_is_still_used(creds_file, monkeypatch):
+    """A wrong token fails later with an opaque 401; say so up front."""
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    creds_file.write_text(PAPER + "HF_TOKEN=abcdef123456\n")
+
+    token, warning = config.load_hf_token()
+    assert token == "abcdef123456"
+    assert "hf_" in warning
+
+
+def test_an_exported_token_wins_over_the_file(creds_file, monkeypatch):
+    """An explicit environment variable is a deliberate override."""
+    monkeypatch.setenv("HF_TOKEN", "hf_from_shell")
+    creds_file.write_text(PAPER + "HF_TOKEN=hf_from_file\n")
+
+    assert config.apply_hf_token() == "hf_from_shell"
+
+
+def test_an_empty_token_line_is_treated_as_absent(creds_file, monkeypatch):
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    creds_file.write_text(PAPER + "HF_TOKEN=\n")
+    assert config.load_hf_token() == (None, None)
+
+
+def test_a_missing_creds_file_yields_no_token(creds_file, monkeypatch):
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    assert config.load_hf_token() == (None, None)
+
+
+def test_the_token_never_appears_in_the_paper_account_guard(creds_file, monkeypatch):
+    """Adding HF_TOKEN must not disturb credential validation."""
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    creds_file.write_text(PAPER + "HF_TOKEN=hf_abc\n")
+    creds_file.chmod(0o600)
+
+    creds, warning = load_credentials()
+    assert creds.key_id == "PK123"
+    assert creds.paper is True
+    assert warning is None

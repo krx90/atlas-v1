@@ -232,6 +232,40 @@ def load_credentials() -> tuple[Credentials, str | None]:
     return Credentials(key_id, secret_key, paper), _permissions_warning(CREDS_FILE)
 
 
+def load_hf_token() -> tuple[str | None, str | None]:
+    """Read the optional HuggingFace token. Returns (token, warning).
+
+    Entirely optional, unlike the Alpaca keys: a token only raises download
+    throughput and anonymous rate limits on a *cold* cache. Once the weights are
+    local, Atlas loads with `local_files_only=True` and never contacts the hub,
+    so the token is unused. Kept for a fresh machine or a rate-limited network.
+    """
+    if not CREDS_FILE.exists():
+        return None, None
+    token = str(dotenv_values(CREDS_FILE).get("HF_TOKEN") or "").strip()
+    if not token:
+        return None, None
+    # Real tokens are `hf_...`; anything else is almost certainly a paste error,
+    # and a malformed token fails at download time with an opaque 401.
+    if not token.startswith("hf_"):
+        return token, "HF_TOKEN does not start with 'hf_' -- check it was pasted correctly."
+    return token, None
+
+
+def apply_hf_token() -> str | None:
+    """Publish the token to the environment for huggingface_hub to pick up.
+
+    Must run before any hub call. Never overwrites a token already exported in
+    the shell -- an explicit environment variable is a deliberate override.
+    """
+    if os.environ.get("HF_TOKEN"):
+        return os.environ["HF_TOKEN"]
+    token, _warning = load_hf_token()
+    if token:
+        os.environ["HF_TOKEN"] = token
+    return token
+
+
 def ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -245,3 +279,5 @@ def configure_torch_env() -> None:
     """
     os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+    # Before any hub call, so a cold-cache download can use it.
+    apply_hf_token()
