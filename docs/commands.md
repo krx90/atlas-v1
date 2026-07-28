@@ -164,6 +164,62 @@ Confirm? [y/n]:
 
 Add `--dry-run` to any buy to see the summary without submitting anything.
 
+## Review
+
+Flag open positions worth closing, worst first.
+
+```
+atlas review                  score every holding
+atlas review --no-forecast    mechanical signals only
+```
+
+**Reports only.** Closing stays a deliberate `atlas close XYZ`.
+
+**Thresholds scale with each symbol's own volatility, not fixed percentages.**
+Across one real portfolio daily volatility ran 0.90% to 3.60% — a 4x spread — so
+a fixed -8% stop meant -8.9 sigma for the quietest holding and -2.3 for the
+noisiest. Instead:
+
+```
+expected_move = daily_vol x sqrt(days_held)
+sigma         = unrealised P&L% / expected_move
+```
+
+The `sqrt(days_held)` term stops a long-held position flagging merely for having
+had time to drift — volatility compounds with the square root of time.
+
+Five signals, each contributing a severity; the score is their sum, so failing
+several outranks failing one badly:
+
+| signal | fires when |
+|---|---|
+| **stop** | losing more than 2 sigma |
+| **target** | winning more than 3 sigma |
+| **liquidity** | no longer passes the liquidity screen |
+| **borrow** | a short is no longer easy-to-borrow — it can be recalled and closed *for* you |
+| **forecast\*** | the model now expects the position to move against you |
+
+Thresholds are asymmetric on purpose: cut losses sooner than gains are banked.
+All are tunable in `config.py` (`REVIEW_STOP_SIGMA`, `REVIEW_TARGET_SIGMA`, …).
+
+**\* The forecast signal has no demonstrated skill.** Two backtests returned
+IC -0.008 and +0.026, neither distinguishable from zero. It is capped so it
+cannot dominate, marked wherever it appears, and `--no-forecast` removes it — the
+other four signals are mechanical and do not depend on the model working.
+
+```
+Symbol  Side    P&L %  Sigma   Held  Score  Flags
+TLN     LONG   -8.36%  -2.32  today   0.32  down -2.3s, past the 2.0s stop
+KR      LONG   +2.63%  +1.49  today   0.00  -
+
+  1 of 10 positions flagged. To act:
+    atlas close TLN
+```
+
+Volume deliberately does **not** move the thresholds. It tells you what exiting
+will cost, not whether to exit, so it appears as its own `costly to exit` flag
+when a position is large relative to the symbol's median daily dollar volume.
+
 ## Close
 
 Close an entire position, in either direction. Requires a `[y/n]` confirmation.

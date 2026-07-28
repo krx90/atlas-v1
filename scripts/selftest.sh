@@ -64,6 +64,12 @@ atlas buy AAPL 500 </dev/null >/tmp/atlas_side.log 2>&1
 grep -q "no side given\|not a terminal" /tmp/atlas_side.log
 check $? "an omitted side aborts rather than guessing a direction"
 
+section "Review (read-only)"
+atlas review --no-forecast </dev/null >/tmp/atlas_review.log 2>&1
+check $? "atlas review --no-forecast"
+grep -q "positions" /tmp/atlas_review.log
+check $? "review reports on the portfolio"
+
 section "Scan (this is the slow part)"
 rows_in() { [ -f "$1" ] && echo $(( $(wc -l < "$1") - 1 )) || echo 0; }  # minus header
 before=$(rows_in top30_long.csv)

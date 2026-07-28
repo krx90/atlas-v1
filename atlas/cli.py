@@ -72,6 +72,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     buy.add_argument("--dry-run", action="store_true", help="show the summary, submit nothing")
 
+    rev = sub.add_parser("review", help="flag open positions worth closing")
+    rev.add_argument(
+        "--no-forecast",
+        action="store_true",
+        help="skip the model signal (the four mechanical checks still run)",
+    )
+
     close = sub.add_parser("close", help="close an entire position, long or short")
     close.add_argument("symbol")
     close.add_argument("--dry-run", action="store_true", help="show the summary, submit nothing")
@@ -117,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
     # Imported lazily: `atlas view` should not pay for torch, and `atlas --help`
     # should not pay for anything.
     from .commands import (  # noqa: PLC0415
-        backtest, buy, close, info, news, orders, portfolio, scan, view,
+        backtest, buy, close, info, news, orders, portfolio, review, scan, view,
     )
 
     handlers = {
@@ -127,6 +134,7 @@ def main(argv: list[str] | None = None) -> int:
         "orders": orders.run,
         "buy": buy.run,
         "close": close.run,
+        "review": review.run,
         "info": info.run,
         "view": view.run,
         "news": news.run,

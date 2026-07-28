@@ -162,6 +162,40 @@ AVOID_MAX_MU = 0.0
 DEFAULT_ORDER_DOLLARS = 100.0
 
 # --------------------------------------------------------------------------
+# Position review (`atlas review`)
+# --------------------------------------------------------------------------
+#
+# Thresholds are in units of each symbol's own volatility, not fixed
+# percentages. Across one real 10-position portfolio daily volatility ran 0.90%
+# to 3.60% -- a 4x spread -- so a fixed -8% stop meant -8.9 sigma for the
+# quietest holding and -2.3 for the noisiest.
+
+#: Loss beyond this many sigma is flagged. Asymmetric with the target below:
+#: cut losses sooner than gains are banked.
+REVIEW_STOP_SIGMA = 2.0
+#: Gain beyond this many sigma is flagged as a candidate to take.
+REVIEW_TARGET_SIGMA = 3.0
+#: Volatility floor for the sigma denominator. One observed symbol had realized
+#: volatility rounding to 0.00%, which would make any move read as infinite.
+REVIEW_MIN_VOL = 0.002
+#: Severity for a holding that no longer passes the liquidity screen.
+REVIEW_UNIVERSE_SEVERITY = 1.5
+#: Higher: a short losing `easy_to_borrow` can be recalled and closed *for* you,
+#: at a price you do not choose. The only genuinely forced exit here.
+REVIEW_BORROW_SEVERITY = 2.5
+#: Flag when a position exceeds this share of the symbol's median daily dollar
+#: volume -- an exit-cost warning, deliberately not part of the stop level.
+REVIEW_ADV_SHARE = 0.02
+#: The forecast signal is capped and floored: two backtests found no detectable
+#: skill (IC -0.008, +0.026), so it must not dominate the mechanical signals.
+REVIEW_FORECAST_CAP = 2.0
+REVIEW_FORECAST_MIN = 0.5
+#: Trailing sessions used for the volatility estimate.
+REVIEW_VOL_WINDOW = 260
+#: How many `atlas close` suggestions to print.
+REVIEW_SUGGEST = 5
+
+# --------------------------------------------------------------------------
 # News
 # --------------------------------------------------------------------------
 

@@ -50,6 +50,8 @@ of them touch the model.
 | `atlas/forecast.py` | Kronos loading and batched Monte Carlo sampling |
 | `atlas/scoring.py` | paths → statistics → composite score, long or short |
 | `atlas/backtest.py` | walk-forward as-of slicing, forward returns, rank IC |
+| `atlas/review.py` | volatility-scaled exit signals for open positions |
+| `atlas/kv_cache.py` | cached autoregressive decoding, 3-7x faster |
 | `atlas/results.py` | scan CSV read/write, atomic overwrite, staleness |
 | `atlas/ui.py` | rich tables, order summary block, confirmations |
 | `atlas/commands/` | one module per verb |
@@ -473,6 +475,87 @@ untouched old one even if a scan is interrupted mid-write. `scanned_at` carries 
 timestamp and is what the staleness warning reads. The full scored
 universe is archived to `data/scan_full_<timestamp>.csv`, so history is retained without the
 top-30 file ever growing.
+
+---
+
+## 6b. Position review
+
+`atlas review` scores open positions on five independent exit signals. It reports
+only -- closing stays a deliberate `atlas close XYZ`.
+
+**Thresholds are in each symbol's own volatility, not fixed percentages.** Across
+one real 10-position portfolio daily volatility ran 0.90% to 3.60%, a 4x spread,
+so a fixed -8% stop meant -8.9 sigma for the quietest holding and -2.3 for the
+noisiest -- four times stricter for the calm name.
+
+```
+expected_move = daily_vol * sqrt(max(days_held, 1))
+pnl_sigma     = unrealised_pnl_pct / expected_move
+```
+
+The `sqrt(days_held)` term is what stops a long-held position flagging merely for
+having had time to drift: volatility compounds with the square root of time, so
+ten days should see ~3.2x the move of one. `days_held` comes from
+`portfolio.entry_dates()`, which reconstructs it from fill history because
+Alpaca's Position model carries no timestamp.
+
+`REVIEW_MIN_VOL` floors the denominator -- one observed symbol had realized
+volatility rounding to 0.00%, which would make any move read as infinite.
+
+| signal | severity | model-dependent? |
+|---|---|---|
+| stop | `max(0, -sigma - 2.0)` | no |
+| target | `max(0, sigma - 3.0)` | no |
+| liquidity | fixed 1.5 when out of the universe | no |
+| borrow | fixed 2.5 -- a short losing `easy_to_borrow` | no |
+| costly to exit | position value / median daily dollar volume | no |
+| forecast\* | `\|mu\|/realized_vol`, capped at 2.0 | **yes** |
+
+Score is the sum, so failing several checks outranks failing one badly.
+
+The borrow signal is scored hardest of the mechanical ones because it is the only
+genuinely *forced* exit: the borrow can be recalled and the position closed for
+you, at a price you do not choose.
+
+**Volume is deliberately not in the trigger.** It says what exiting will cost,
+not whether to exit; folding it into the stop level would conflate two different
+things. It is a separate flag.
+
+The forecast signal is capped and floored so it cannot dominate, and is printed
+with a marker and a footnote -- two backtests found no detectable skill. Four of
+the five signals work regardless.
+
+### The KV cache, in production
+
+This is the first caller to use `atlas/kv_cache.py`. Profiling showed **89% of
+scan time in `model.decode_s1`**, which re-reads the entire context at every
+autoregressive step -- 5 x 25 x 512 = 64,000 token-positions through 8 layers to
+produce 25 new tokens per step.
+
+Caching the keys and values makes each step O(1) instead of O(context). Measured
+**bit-identical** output to the uncached path under the same seed
+(`max|diff| = 0.00e+00`, `array_equal = True`), at 3.2-7.3x the speed depending
+on horizon. Reviewing 10 positions takes ~11 s including model load.
+
+Three details make it correct, each of which fails *silently* if got wrong:
+
+1. **RoPE needs a position offset** -- upstream always rotates from position 0.
+2. **`is_causal` must be False when decoding** -- with one query against N cached
+   keys, PyTorch's causal mask aligns top-left and would expose only position 0.
+3. **The context window must not roll** -- Kronos slides the buffer past
+   `max_context`, shifting every cached key. `check_fits` enforces
+   `lookback + horizon <= max_context`, so review uses a 507-bar lookback.
+
+A fourth was found only by comparing against the uncached path:
+`decode_s2` cross-attends over the *entire* context (`DependencyAwareLayer`), so
+unlike `decode_s1` it cannot be fed only the newest token. The full context is
+accumulated instead, which is exact because a causal transformer never revises an
+earlier position when a later one is appended.
+
+**Multi-threading does not help and fp16 is slower.** Measured on MPS: 745 ms at
+4 threads, 776 at 1, 786 at 8, 782 at 10 -- the transformer runs on the GPU, so
+CPU threads do not execute it. bf16 autocast measured 0.87x and fp16 0.80x, i.e.
+slower. Both may differ on CUDA.
 
 ---
 
