@@ -52,12 +52,17 @@ class ForecastRequest:
 
 @dataclass
 class SymbolPaths:
-    """Sampled futures for one symbol. Arrays are (paths, horizon)."""
+    """Sampled futures for one symbol. Arrays are (paths, horizon).
+
+    `lows` and `highs` are both kept because the two sides of a trade have
+    opposite risk: a long is hurt by the worst low, a short by the worst high.
+    """
 
     symbol: str
     last_close: float
     closes: np.ndarray
     lows: np.ndarray
+    highs: np.ndarray
     realized_vol: float = 0.0
 
     def valid_mask(self) -> np.ndarray:
@@ -69,12 +74,11 @@ class SymbolPaths:
         failure, and averaging it into the mean corrupts the whole symbol --
         one observed case produced a mean 'return' of -388%.
         """
-        return (
-            np.isfinite(self.closes).all(axis=1)
-            & np.isfinite(self.lows).all(axis=1)
-            & (self.closes > 0).all(axis=1)
-            & (self.lows > 0).all(axis=1)
-        )
+        series = (self.closes, self.lows, self.highs)
+        mask = np.ones(self.closes.shape[0], dtype=bool)
+        for arr in series:
+            mask &= np.isfinite(arr).all(axis=1) & (arr > 0).all(axis=1)
+        return mask
 
 
 def realized_vol(closes: np.ndarray, horizon: int, window: int = 250) -> float:
@@ -296,14 +300,13 @@ class KronosEngine:
         out: list[SymbolPaths] = []
         for i, request in enumerate(group):
             block = predictions[i * paths : (i + 1) * paths]
-            closes = np.stack([p["close"].to_numpy(dtype="float64") for p in block])
-            lows = np.stack([p["low"].to_numpy(dtype="float64") for p in block])
             out.append(
                 SymbolPaths(
                     symbol=request.symbol,
                     last_close=request.last_close,
-                    closes=closes,
-                    lows=lows,
+                    closes=np.stack([p["close"].to_numpy(dtype="float64") for p in block]),
+                    lows=np.stack([p["low"].to_numpy(dtype="float64") for p in block]),
+                    highs=np.stack([p["high"].to_numpy(dtype="float64") for p in block]),
                     realized_vol=request.realized_vol,
                 )
             )

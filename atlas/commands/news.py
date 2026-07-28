@@ -95,7 +95,7 @@ def run(args) -> int:
             scan_rows = results.read()
         except FileNotFoundError:
             ui.error(
-                f"No scan results at {config.TOP_ASSETS_CSV}. "
+                f"No scan results at {config.TOP_LONG_CSV}. "
                 "Run `atlas scan`, or pass a symbol / `all`."
             )
             return 1

@@ -28,7 +28,7 @@ Alpaca /v2/stocks/bars   ──►  bars.py       ──►  5y daily OHLCV     
                               scoring.py   ──►  mu, sigma, p_up, q05, mdd, score
                                                         │
                                                         ▼
-                              results.py   ──►  top30_assets.csv  (atomic overwrite)
+                              results.py   ──►  top30_long.csv  + top30_short.csv
                                                   data/scan_full_<ts>.csv  (archive)
 ```
 
@@ -48,7 +48,8 @@ of them touch the model.
 | `atlas/bars.py` | daily bar cache: seed, delta top-up, load |
 | `atlas/universe.py` | asset sweep and liquidity screen |
 | `atlas/forecast.py` | Kronos loading and batched Monte Carlo sampling |
-| `atlas/scoring.py` | paths → statistics → composite score |
+| `atlas/scoring.py` | paths → statistics → composite score, long or short |
+| `atlas/backtest.py` | walk-forward as-of slicing, forward returns, rank IC |
 | `atlas/results.py` | scan CSV read/write, atomic overwrite, staleness |
 | `atlas/ui.py` | rich tables, order summary block, confirmations |
 | `atlas/commands/` | one module per verb |
@@ -351,6 +352,31 @@ thing as last week's 2.4. Ranking is descending, ties broken on symbol for stabi
 Signals: **BUY** when `mu ≥ 0.5%` and `p_up ≥ 60%`; **AVOID** when `mu ≤ 0`; **HOLD**
 otherwise.
 
+### Long and short are the same opinion, read two ways
+
+Measured on 29 symbols scored both ways: **Spearman(long score, short score) = −0.9946**, and
+the top-10 shorts overlap the bottom-10 longs **10/10**. Tail asymmetry reorders 16 of 29
+symbols, but only by one or two places, and never changes which names you would act on.
+
+This is inherent, not a defect. Both scores are deterministic functions of the same `mu` and
+`sigma`, and differ only by `LAMBDA * (q05 - q95) / sigma`. There is no second forward pass and
+no second opinion — the model has one view of the distribution and the two sides read it from
+opposite ends.
+
+So `atlas scan short` should be understood as a **presentation of the same ranking**, not as an
+independent short signal. What it genuinely adds:
+
+- names that cannot be borrowed are excluded, so the list is actionable;
+- the risk columns show `q95` and mean run-up rather than downside figures that would be
+  misleading for a short;
+- no mental inversion of a table ranked the other way.
+
+**A known asymmetry is currently not modelled.** A long's worst case is bounded at −100%; a
+short's is unbounded. Using a larger `LAMBDA` for shorts than for longs would reflect that, and
+would demote names with fat upside tails from the short list regardless of how attractive their
+mean looks. Both sides presently use `LAMBDA_DOWNSIDE = 0.5`, so the asymmetry shows up only in
+the order-summary warning, not in the ranking.
+
 ### Guards against unusable model output
 
 Kronos normalizes each input window by its own mean and standard deviation, and denormalizes
@@ -424,7 +450,7 @@ treated as the weakest column in the output.
 
 ### Output
 
-`top30_assets.csv` columns:
+`top30_long.csv` columns (the short file mirrors them):
 
 ```
 rank, symbol, name, last_close, score, signal, mu_pct, p_up, sigma_pct,
@@ -444,7 +470,7 @@ re-running the model.
 is written to a temp file in the same directory and `os.replace`d into position, which is
 atomic on one filesystem, so the file on disk is always either the complete new ranking or the
 untouched old one even if a scan is interrupted mid-write. `scanned_at` carries the run
-timestamp and is what `atlas buy N` reads for its 24-hour staleness warning. The full scored
+timestamp and is what the staleness warning reads. The full scored
 universe is archived to `data/scan_full_<timestamp>.csv`, so history is retained without the
 top-30 file ever growing.
 
@@ -465,9 +491,13 @@ Every order prints the summary block from `docs/commands.md` and requires `[y/n]
 non-interactive stdin **declines** rather than defaulting to yes, so a piped or scripted
 invocation can never trade unattended. `--dry-run` renders the summary and submits nothing.
 
-`atlas sell XYZ` closes an entire position via `close_position`. There is deliberately no
-`atlas sell N`: ranking positions worst-to-best and closing the bottom few is a bulk action
-that is easy to fire by accident and hard to undo.
+`atlas close XYZ` closes an entire position via `close_position`, which handles both
+directions — selling a long, buying to cover a short. The summary names which of those is about
+to happen, read from `position.side`, because they are opposite trades. Shorts report a negative
+`qty` and `market_value`, so the summary and the portfolio totals use magnitudes.
+
+There is deliberately no bulk form for either `buy` or `close`: taking or closing a list of
+positions in one command is easy to fire by accident and hard to undo.
 
 ---
 
@@ -490,7 +520,7 @@ Manual invariant checks after a scan:
 
 - exactly one `loaded Kronos-small` line in the output;
 - `scored N == eligible M` in the reconciliation line;
-- `top30_assets.csv` stays at 30 rows across runs while `scanned_at` advances;
+- `top30_long.csv` stays at 30 rows across runs while `scanned_at` advances;
 - corrupting one symbol's bars puts it in `data/scan_skipped.csv` with a reason rather than
   making it disappear.
 
@@ -544,8 +574,8 @@ Manual invariant checks after a scan:
 - Built the package, 69 tests, and this document.
 - Verified in the `atlas` conda env: torch 2.13.0 on MPS; model loads once (8.4 s); 25 of 25
   sampled paths distinct; ~2.5 s per symbol, projecting to ~25 minutes for 600 symbols.
-- Decisions taken with the user: single `top30_assets.csv`; 5-day horizon; `Kronos-small`;
-  `atlas sell N` removed in favour of symbol-only selling; conda environment; secrets in a
+- Decisions taken with the user: 5-day horizon; `Kronos-small`;
+  bulk order forms removed in favour of one symbol at a time; conda environment; secrets in a
   gitignored `creds.env`; shallow clone with `vendor/` gitignored.
 
 **2026-07-26, later** — verification against the live paper account, and two real bugs.

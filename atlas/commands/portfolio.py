@@ -39,6 +39,7 @@ def run(args) -> int:
         "Positions",
         [
             ("Symbol", "left"),
+            ("Side", "left"),
             ("Qty", "right"),
             ("Avg entry", "right"),
             ("Current", "right"),
@@ -51,16 +52,22 @@ def run(args) -> int:
     total_value = 0.0
     total_pl = 0.0
     for p in rows:
+        # A short reports negative qty and market value. Exposure is what the
+        # position is worth either way, so totals use magnitudes -- summing the
+        # signed values would net a hedged book to nearly nothing and read as
+        # though there were no positions at all.
+        side = str(getattr(p.side, "value", p.side))
         value = float(p.market_value)
         pl = float(p.unrealized_pl)
-        total_value += value
+        total_value += abs(value)
         total_pl += pl
         table.add_row(
             p.symbol,
-            f"{float(p.qty):g}",
+            ui.Text(side.upper(), style="cyan" if side == "long" else "magenta"),
+            f"{abs(float(p.qty)):g}",
             ui.money(float(p.avg_entry_price)),
             ui.money(float(p.current_price)),
-            ui.money(value),
+            ui.money(abs(value)),
             ui.pnl_text(pl),
             ui.pct_text(float(p.unrealized_plpc)),
         )
@@ -69,6 +76,7 @@ def run(args) -> int:
     table.add_section()
     table.add_row(
         f"{len(rows)} positions",
+        "",
         "",
         "",
         "",

@@ -46,18 +46,27 @@ atlas news AAPL </dev/null >/tmp/atlas_news.log 2>&1
 check $? "atlas news AAPL"
 
 section "Orders (dry run -- nothing is submitted)"
-grep_out "ORDER SUMMARY" atlas buy AAPL 500 --dry-run
-check $? "atlas buy AAPL 500 --dry-run produced an order summary"
-grep_out "Non-fractionable" atlas buy SNDQ 500 --dry-run
+grep_out "ORDER SUMMARY" atlas buy AAPL 500 l --dry-run
+check $? "atlas buy AAPL 500 l --dry-run produced an order summary"
+grep_out "Non-fractionable" atlas buy SNDQ 500 l --dry-run
 check $? "non-fractionable rounding path is detected"
-grep_out "not enough for a whole share" atlas buy SNDQ 10 --dry-run
+grep_out "not enough" atlas buy SNDQ 10 l --dry-run
 check $? "an unaffordable whole-share order is refused"
-grep_out "No open position" atlas sell KO
-check $? "selling an unheld symbol is refused"
+grep_out "No open position" atlas close KO
+check $? "closing an unheld symbol is refused"
+grep_out "Losses on a short are unbounded" atlas buy AAPL 500 s --dry-run
+check $? "short summary warns that losses are unbounded"
+grep_out "takes a symbol, not a count" atlas buy 5 l --dry-run
+check $? "the removed bulk form points at buying one symbol"
+grep_out "replaced by .atlas close" atlas sell AAPL
+check $? "the removed sell command points at close"
+atlas buy AAPL 500 </dev/null >/tmp/atlas_side.log 2>&1
+grep -q "no side given\|not a terminal" /tmp/atlas_side.log
+check $? "an omitted side aborts rather than guessing a direction"
 
 section "Scan (this is the slow part)"
 rows_in() { [ -f "$1" ] && echo $(( $(wc -l < "$1") - 1 )) || echo 0; }  # minus header
-before=$(rows_in top30_assets.csv)
+before=$(rows_in top30_long.csv)
 time atlas scan --limit 40 </dev/null >/tmp/atlas_scan.log 2>&1
 scan_status=$?
 check $scan_status "atlas scan --limit 40 exited cleanly"
@@ -65,6 +74,11 @@ check $scan_status "atlas scan --limit 40 exited cleanly"
 loads=$(grep -c "loaded Kronos" /tmp/atlas_scan.log)
 [ "$loads" = 1 ]
 check $? "model loaded exactly once (found $loads)"
+
+grep -q "long candidates" /tmp/atlas_scan.log && grep -q "short candidates" /tmp/atlas_scan.log
+check $? "a bare scan prints both the long and short tables"
+[ -f top30_short.csv ]
+check $? "top30_short.csv was written"
 
 recon=$(grep "^scored " /tmp/atlas_scan.log)
 printf '  %s\n' "$recon"
@@ -75,9 +89,9 @@ sys.exit(0 if m else 1)
 PY
 check $? "reconciliation line present"
 
-after=$(rows_in top30_assets.csv)
+after=$(rows_in top30_long.csv)
 [ "$after" -le 30 ]
-check $? "top30_assets.csv holds at most 30 data rows (was $before, now $after)"
+check $? "top30_long.csv holds at most 30 data rows (was $before, now $after)"
 
 section "Summary"
 printf '  %d passed, %d failed\n' "$pass" "$fail"
@@ -85,5 +99,5 @@ printf '\n  Paste back: this summary, plus these two lines --\n'
 grep -E "^loaded Kronos|^scored " /tmp/atlas_scan.log | sed 's/^/    /'
 printf '\n  Full scan log: /tmp/atlas_scan.log\n'
 printf '  Top of the ranking:\n'
-head -4 top30_assets.csv | cut -c1-100 | sed 's/^/    /'
+head -4 top30_long.csv | cut -c1-100 | sed 's/^/    /'
 exit $(( fail > 0 ))

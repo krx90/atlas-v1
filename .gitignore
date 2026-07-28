@@ -2,7 +2,11 @@ creds.env
 
 vendor/
 data/
-top30_assets.csv
+# Scan output -- regenerated every run, not source.
+top30_long.csv
+top30_short.csv
+selftest.log
+data/progress.*.json
 
 __pycache__/
 *.py[cod]

@@ -92,14 +92,16 @@ def build(conn: sqlite3.Connection, *, verbose: bool = True) -> list[sqlite3.Row
 
     conn.execute("DELETE FROM universe")
     conn.executemany(
-        "INSERT INTO universe (symbol, name, exchange, fractionable, dollar_volume, last_price) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO universe (symbol, name, exchange, fractionable, shortable, "
+        "easy_to_borrow, dollar_volume, last_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [
             (
                 symbol,
                 by_symbol[symbol].name,
                 str(getattr(by_symbol[symbol].exchange, "value", by_symbol[symbol].exchange)),
                 int(bool(by_symbol[symbol].fractionable)),
+                int(bool(by_symbol[symbol].shortable)),
+                int(bool(by_symbol[symbol].easy_to_borrow)),
                 dv,
                 price,
             )
@@ -120,9 +122,24 @@ def build(conn: sqlite3.Connection, *, verbose: bool = True) -> list[sqlite3.Row
 
 def load(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return conn.execute(
-        "SELECT symbol, name, exchange, fractionable, dollar_volume, last_price "
-        "FROM universe ORDER BY dollar_volume DESC"
+        "SELECT symbol, name, exchange, fractionable, shortable, easy_to_borrow, "
+        "dollar_volume, last_price FROM universe ORDER BY dollar_volume DESC"
     ).fetchall()
+
+
+def borrowable(conn: sqlite3.Connection) -> set[str]:
+    """Symbols that can actually be shorted.
+
+    Both flags are required: `shortable` says Alpaca permits it at all,
+    `easy_to_borrow` says there is inventory today. A name failing either is
+    not a short candidate, however good the forecast looks.
+    """
+    return {
+        r["symbol"]
+        for r in conn.execute(
+            "SELECT symbol FROM universe WHERE shortable = 1 AND easy_to_borrow = 1"
+        )
+    }
 
 
 def age_days(conn: sqlite3.Connection) -> float | None:

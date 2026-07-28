@@ -58,9 +58,17 @@ def _collect_requests(conn, rows, limit: int | None, horizon: int, lookback: int
     return requests, skipped
 
 
-def _render(ranked, names, shown: int) -> None:
+def _render(ranked, names, shown: int, side: str) -> None:
+    """One table per side, with that side's own risk columns.
+
+    A long is judged on P(up), the 5th-percentile outcome and the worst low; a
+    short on P(down), the 95th percentile and the worst high. Showing a long's
+    columns for a short would make the risk look like the opposite of what it is.
+    """
+    is_long = side == scoring.LONG
+    header = "Top %d long candidates" if is_long else "Top %d short candidates"
     table = ui.table(
-        f"Top {shown} by score",
+        header % shown,
         [
             ("#", "right"),
             ("Symbol", "left"),
@@ -68,24 +76,25 @@ def _render(ranked, names, shown: int) -> None:
             ("Last", "right"),
             ("Score", "right"),
             ("E[ret]", "right"),
-            ("P(up)", "right"),
+            ("P(up)" if is_long else "P(down)", "right"),
             ("Sigma", "right"),
-            ("5% tail", "right"),
+            ("5% tail" if is_long else "95% tail", "right"),
+            ("Max DD" if is_long else "Max run-up", "right"),
             ("Signal", "left"),
         ],
     )
     for i, s in enumerate(ranked[:shown], start=1):
-        name = names.get(s.symbol, "")
         table.add_row(
             str(i),
             s.symbol,
-            name[:28],
+            names.get(s.symbol, "")[:28],
             ui.money(s.last_close),
             f"{s.score:.2f}",
             ui.pct_text(s.mu),
-            f"{s.p_up * 100:.0f}%",
+            f"{(s.p_up if is_long else s.p_down) * 100:.0f}%",
             f"{s.sigma * 100:.2f}%",
-            ui.pct_text(s.q05),
+            ui.pct_text(s.q05 if is_long else s.q95),
+            ui.pct_text(s.mdd if is_long else s.runup),
             s.signal,
         )
     ui.console.print()
@@ -149,9 +158,13 @@ def run(args) -> int:
         ui.error(str(exc))
         return 2
 
-    scores: list[scoring.Score] = []
+    # Both sides are read off the same sampled paths, so scoring long and short
+    # costs one forward pass, not two.
+    scores: dict[str, list[scoring.Score]] = {scoring.LONG: [], scoring.SHORT: []}
     rejected: list[tuple[str, str]] = []
     failures: list[tuple[str, str]] = []
+    with db.connect() as conn:
+        can_borrow = universe.borrowable(conn)
 
     def on_failure(symbols_failed, exc):
         for symbol in symbols_failed:
@@ -175,23 +188,34 @@ def run(args) -> int:
             on_failure=on_failure,
         ):
             try:
-                scores.append(scoring.score_paths(symbol_paths))
+                scores[scoring.LONG].append(scoring.score_paths(symbol_paths))
+                # A name that cannot be borrowed is not a short candidate,
+                # however good the forecast. Excluded here rather than shown
+                # and then rejected at order time.
+                if symbol_paths.symbol in can_borrow:
+                    scores[scoring.SHORT].append(
+                        scoring.score_paths(symbol_paths, side=scoring.SHORT)
+                    )
             except scoring.InvalidForecast as exc:
                 # Accounted for, not lost: the model returned something, and we
-                # judged it unusable. Distinct from a symbol going missing.
+                # judged it unusable. Distinct from a symbol going missing. The
+                # guards are direction-neutral, so this rejects both sides.
                 rejected.append((symbol_paths.symbol, f"rejected: {exc}"))
 
-    ranked = scoring.rank(scores)
-    top_path, archive = results.write(
+    ranked = {side: scoring.rank(s) for side, s in scores.items()}
+    written, archive = results.write(
         ranked, names, horizon=horizon, paths=paths, model=engine.model_name
     )
     all_skipped = skipped + rejected + failures
     results.write_skipped(all_skipped)
 
-    _render(ranked, names, min(config.TOP_N, len(ranked)))
+    # No argument means show everything; a side narrows what is printed, never
+    # what is computed or written.
+    for side in (args.side,) if args.side else (scoring.LONG, scoring.SHORT):
+        _render(ranked[side], names, min(config.TOP_N, len(ranked[side])), side)
 
     eligible = len(requests)
-    scored = len(scores)
+    scored = len(scores[scoring.LONG])
     ui.console.print()
     ui.info(
         f"scored {scored} / eligible {eligible} / universe {len(symbols)} "
@@ -214,17 +238,26 @@ def run(args) -> int:
         ui.info(f"  {len(skipped)} skipped before forecasting: {detail}")
     if all_skipped:
         ui.info(f"  detail: {config.SKIPPED_CSV}")
+    n_long = min(config.TOP_N, len(ranked[scoring.LONG]))
+    n_short = min(config.TOP_N, len(ranked[scoring.SHORT]))
     ui.info(
-        f"  wrote {top_path.name} ({min(config.TOP_N, len(ranked))} rows), "
-        f"archived {archive.name}"
+        f"  wrote {written[scoring.LONG].name} ({n_long} rows) and "
+        f"{written[scoring.SHORT].name} ({n_short} rows), archived {archive.name}"
     )
+    not_borrowable = scored - len(scores[scoring.SHORT])
+    if not_borrowable > 0:
+        ui.info(f"  {not_borrowable} scored symbols excluded from shorts (not borrowable)")
 
     # Every eligible symbol must be accounted for as scored, rejected or failed.
     # Anything else means a symbol vanished silently, which is the one outcome
     # this command must never allow.
     accounted = scored + len(rejected) + len(failures)
     if accounted != eligible:
-        seen = {s.symbol for s in scores} | {s for s, _ in rejected} | {s for s, _ in failures}
+        seen = (
+            {s.symbol for s in scores[scoring.LONG]}
+            | {s for s, _ in rejected}
+            | {s for s, _ in failures}
+        )
         missing = sorted({r.symbol for r in requests} - seen)
         ui.error(
             f"{len(missing)} eligible symbol(s) unaccounted for: "

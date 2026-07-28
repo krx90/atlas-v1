@@ -16,7 +16,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"atlas {__version__}")
     sub = parser.add_subparsers(dest="command", metavar="<command>")
 
-    scan = sub.add_parser("scan", help="score the universe and write top30_assets.csv")
+    scan = sub.add_parser(
+        "scan", help="score the universe for long and short candidates"
+    )
+    # Both sides are always computed and written; this only narrows what prints.
+    scan.add_argument(
+        "side",
+        nargs="?",
+        choices=("long", "short"),
+        help="which table to print (default: both)",
+    )
     scan.add_argument("--limit", type=int, help="only scan the N most liquid symbols")
     scan.add_argument("--paths", type=int, help="Monte Carlo paths per symbol (default 25)")
     scan.add_argument("--horizon", type=int, help="trading days to forecast (default 5)")
@@ -31,17 +40,41 @@ def build_parser() -> argparse.ArgumentParser:
         help="Kronos checkpoint (default small). base is ~4x slower per symbol",
     )
 
+    bt = sub.add_parser(
+        "backtest", help="walk-forward test of whether the ranking predicts returns"
+    )
+    bt.add_argument("side", nargs="?", choices=("long", "short"), help="ranking to test")
+    bt.add_argument("--dates", type=int, default=20, help="as-of dates (default 20)")
+    bt.add_argument(
+        "--spacing", type=int, default=5, help="sessions between as-of dates (default 5)"
+    )
+    bt.add_argument("--symbols", type=int, default=100, help="symbols to test (default 100)")
+    bt.add_argument("--horizon", type=int, help="forward window in sessions (default 5)")
+    bt.add_argument("--paths", type=int, help="Monte Carlo paths (default 25)")
+    bt.add_argument(
+        "--timeframe",
+        choices=("5Min", "15Min", "1Hour"),
+        help="intraday bars instead of daily -- what Kronos was pretrained on",
+    )
+
     sub.add_parser("portfolio", help="show account balance and open positions")
     sub.add_parser("orders", help="show open orders")
 
-    buy = sub.add_parser("buy", help="buy a symbol, or the top N from the latest scan")
-    buy.add_argument("target", help="a symbol (XYZ) or a count (5)")
-    buy.add_argument("amount", nargs="?", type=float, help="dollars per order (default 100)")
+    buy = sub.add_parser("buy", help="open a long or short position in one symbol")
+    buy.add_argument("symbol")
+    # amount and side are both optional and order-insensitive, so they are
+    # parsed by shape rather than position -- see commands/buy.py.
+    buy.add_argument(
+        "rest",
+        nargs="*",
+        metavar="[AMOUNT] [l|s]",
+        help="dollars (default 100) and side; side is asked for if omitted",
+    )
     buy.add_argument("--dry-run", action="store_true", help="show the summary, submit nothing")
 
-    sell = sub.add_parser("sell", help="close an entire position")
-    sell.add_argument("symbol")
-    sell.add_argument("--dry-run", action="store_true", help="show the summary, submit nothing")
+    close = sub.add_parser("close", help="close an entire position, long or short")
+    close.add_argument("symbol")
+    close.add_argument("--dry-run", action="store_true", help="show the summary, submit nothing")
 
     info = sub.add_parser("info", help="company information for a symbol")
     info.add_argument("symbol")
@@ -53,7 +86,22 @@ def build_parser() -> argparse.ArgumentParser:
     news = sub.add_parser("news", help="recent financial news")
     news.add_argument("target", nargs="?", help="a symbol, `all`, or omit for scan results")
 
+    # Removed, but kept as a stub so muscle memory gets a pointer rather than
+    # argparse's bare "invalid choice".
+    removed = sub.add_parser("sell", add_help=False)
+    removed.add_argument("args", nargs="*")
+
     return parser
+
+
+def _removed_sell() -> int:
+    from . import ui  # noqa: PLC0415
+
+    ui.error(
+        "`atlas sell` was replaced by `atlas close`, which closes a position in "
+        "either direction (selling a long, or buying to cover a short)."
+    )
+    return 2
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -63,17 +111,22 @@ def main(argv: list[str] | None = None) -> int:
     if not args.command:
         parser.print_help()
         return 0
+    if args.command == "sell":
+        return _removed_sell()
 
     # Imported lazily: `atlas view` should not pay for torch, and `atlas --help`
     # should not pay for anything.
-    from .commands import buy, info, news, orders, portfolio, scan, sell, view  # noqa: PLC0415
+    from .commands import (  # noqa: PLC0415
+        backtest, buy, close, info, news, orders, portfolio, scan, view,
+    )
 
     handlers = {
         "scan": scan.run,
+        "backtest": backtest.run,
         "portfolio": portfolio.run,
         "orders": orders.run,
         "buy": buy.run,
-        "sell": sell.run,
+        "close": close.run,
         "info": info.run,
         "view": view.run,
         "news": news.run,

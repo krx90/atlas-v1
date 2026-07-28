@@ -25,11 +25,14 @@ DATA_DIR = PROJECT_ROOT / "data"
 DB_PATH = DATA_DIR / "atlas.db"
 KRONOS_DIR = PROJECT_ROOT / "vendor" / "kronos"
 
-#: Scan output. Fully overwritten every run -- never appended to.
-TOP_ASSETS_CSV = PROJECT_ROOT / "top30_assets.csv"
-#: Rows written to TOP_ASSETS_CSV. The full scored universe is archived separately.
+#: Scan output, one file per side. Both are fully overwritten every run --
+#: never appended to -- and both are written on every scan regardless of which
+#: side was asked for, since scoring both costs nothing beyond the one pass.
+TOP_LONG_CSV = PROJECT_ROOT / "top30_long.csv"
+TOP_SHORT_CSV = PROJECT_ROOT / "top30_short.csv"
+#: Rows written to each. The full scored universe is archived separately.
 TOP_N = 30
-#: Age past which `atlas buy N` warns that the scan is stale.
+#: Age past which a scan's results are reported as stale.
 SCAN_STALE_HOURS = 24
 
 SKIPPED_CSV = DATA_DIR / "scan_skipped.csv"
