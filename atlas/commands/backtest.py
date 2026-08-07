@@ -10,7 +10,8 @@ from datetime import datetime, timezone
 
 from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 
-from .. import backtest, config, db, forecast, scoring, ui, universe
+from .. import accuracy, backtest, config, db, forecast, scoring, ui, universe
+from . import accuracy as accuracy_cmd
 
 
 def _render(result: backtest.Result, side: str, horizon: int, unit: str = "day") -> None:
@@ -168,19 +169,25 @@ def run(args) -> int:
     result = backtest.evaluate(obs)
     _render(result, side, horizon, unit)
 
+    # Ranking is only one of the questions. Direction, magnitude, calibration and
+    # the two baselines come from the same observations and cost milliseconds, so
+    # there is no reason to make the user run a second command to see them.
+    accuracy_cmd.render(accuracy.evaluate(obs), backtest.coverage(obs))
+
     tag = "day" if timeframe is None else timeframe
     out = config.DATA_DIR / f"backtest_{side}_{tag}_{horizon}.csv"
     with out.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh)
         writer.writerow([
             "date", "symbol", "score", "mu", "forward_return",
-            "sigma", "q05", "q95", "p_up",
+            "sigma", "q05", "q95", "p_up", "signal", "prior_return",
         ])
         for o in obs:
             writer.writerow([
                 o.date, o.symbol, f"{o.score:.6f}", f"{o.mu:.6f}",
                 f"{o.forward_return:.6f}", f"{o.sigma:.6f}",
                 f"{o.q05:.6f}", f"{o.q95:.6f}", f"{o.p_up:.3f}",
+                o.signal, f"{o.prior_return:.6f}",
             ])
 
     ui.console.print()

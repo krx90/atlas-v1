@@ -55,6 +55,12 @@ class Observation:
     asks whether the forecast distribution was the right width -- does the
     realized return fall below `q05` about 5% of the time? Recording only `mu`
     left that unanswerable, which is why these are here.
+
+    `signal` and `prior_return` exist for `accuracy`. The signal is what a user
+    actually acts on, so whether BUY outperforms AVOID is a more direct question
+    than whether the continuous score correlates with anything. `prior_return`
+    is the trailing return over the same horizon, which is the free momentum
+    baseline the model has to beat to have earned its runtime.
     """
 
     date: str
@@ -67,6 +73,8 @@ class Observation:
     q05: float = 0.0
     q95: float = 0.0
     p_up: float = 0.0
+    signal: str = ""
+    prior_return: float = 0.0
 
 
 @dataclass
@@ -77,6 +85,9 @@ class Window:
     last_close: float
     realized_vol: float
     forward_return: float
+    #: Trailing return over the same horizon, ending at the as-of bar. Strictly
+    #: in the past -- it is the momentum baseline, not an input to the model.
+    prior_return: float = 0.0
 
 
 def slice_at(frame: pd.DataFrame, i: int, lookback: int, horizon: int) -> Window | None:
@@ -99,11 +110,17 @@ def slice_at(frame: pd.DataFrame, i: int, lookback: int, horizon: int) -> Window
     if not last_close > 0 or not future_close > 0:
         return None
 
+    # The trailing return mirrors the forward one: same span, other side of the
+    # as-of bar. Both come from `history`, so it cannot reach past row `i`.
+    prior_close = float(closes[-1 - horizon]) if len(closes) > horizon else 0.0
+    prior_return = prior_close and last_close / prior_close - 1.0
+
     return Window(
         history=forecast.prepare_history(history),
         last_close=last_close,
         realized_vol=forecast.realized_vol(closes, horizon),
         forward_return=future_close / last_close - 1.0,
+        prior_return=float(prior_return),
     )
 
 
@@ -192,7 +209,7 @@ def observations(
             forecast.ForecastRequest(sym, w.history, w.last_close, realized_vol=w.realized_vol)
             for sym, w in entries
         ]
-        futures = {sym: w.forward_return for sym, w in entries}
+        futures = {sym: (w.forward_return, w.prior_return) for sym, w in entries}
 
         for symbol_paths in engine.forecast(requests, horizon=horizon, paths=paths):
             # Report per symbol, not per date. A date takes minutes, and a
@@ -204,6 +221,7 @@ def observations(
                 score = scoring.score_paths(symbol_paths, side=side)
             except scoring.InvalidForecast:
                 continue  # same guards as a live scan; excluded, not scored 0
+            forward, prior = futures[symbol_paths.symbol]
             out.append(
                 Observation(
                     date=stamp,
@@ -211,18 +229,20 @@ def observations(
                     score=score.score,
                     mu=score.mu,
                     side=side,
-                    forward_return=futures[symbol_paths.symbol],
+                    forward_return=forward,
                     sigma=score.sigma,
                     q05=score.q05,
                     q95=score.q95,
                     p_up=score.p_up,
+                    signal=score.signal,
+                    prior_return=prior,
                 )
             )
 
     return out
 
 
-def _spearman(a: np.ndarray, b: np.ndarray) -> float:
+def spearman(a: np.ndarray, b: np.ndarray) -> float:
     """Rank correlation without a scipy dependency in the main package."""
     if len(a) < 3:
         return float("nan")
@@ -269,7 +289,7 @@ def evaluate(obs: list[Observation], *, decile: float = 0.1) -> Result:
     for stamp, group in frame.groupby("date"):
         if len(group) < 5:
             continue
-        ic = _spearman(group["score"].to_numpy(), group["forward_return"].to_numpy())
+        ic = spearman(group["score"].to_numpy(), group["forward_return"].to_numpy())
         if np.isfinite(ic):
             ics.append((stamp, ic, len(group)))
 

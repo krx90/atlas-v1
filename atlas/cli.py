@@ -28,7 +28,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scan.add_argument("--limit", type=int, help="only scan the N most liquid symbols")
     scan.add_argument("--paths", type=int, help="Monte Carlo paths per symbol (default 25)")
-    scan.add_argument("--horizon", type=int, help="trading days to forecast (default 5)")
+    scan.add_argument(
+        "--horizon", type=int, help="bars to forecast ahead (default 5; days unless --timeframe)"
+    )
+    scan.add_argument(
+        "--timeframe",
+        choices=("5Min", "15Min", "30Min", "1Hour"),
+        help="intraday bars instead of daily -- what Kronos was pretrained on",
+    )
     scan.add_argument(
         "--rebuild-universe",
         action="store_true",
@@ -61,8 +68,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bt.add_argument(
         "--timeframe",
-        choices=("5Min", "15Min", "1Hour"),
+        choices=("5Min", "15Min", "30Min", "1Hour"),
         help="intraday bars instead of daily -- what Kronos was pretrained on",
+    )
+
+    acc = sub.add_parser(
+        "accuracy", help="measure forecast accuracy from a saved backtest CSV"
+    )
+    acc.add_argument("csv", help="a data/backtest_*.csv written by `atlas backtest`")
+    acc.add_argument(
+        "--permutations",
+        type=int,
+        default=1000,
+        help="shuffles for the IC null (default 1000)",
     )
 
     sub.add_parser("portfolio", help="show account balance and open positions")
@@ -132,12 +150,13 @@ def main(argv: list[str] | None = None) -> int:
     # Imported lazily: `atlas view` should not pay for torch, and `atlas --help`
     # should not pay for anything.
     from .commands import (  # noqa: PLC0415
-        backtest, buy, close, info, news, orders, portfolio, review, scan, view,
+        accuracy, backtest, buy, close, info, news, orders, portfolio, review, scan, view,
     )
 
     handlers = {
         "scan": scan.run,
         "backtest": backtest.run,
+        "accuracy": accuracy.run,
         "portfolio": portfolio.run,
         "orders": orders.run,
         "buy": buy.run,
@@ -153,8 +172,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         # Preflight the credentials so a command fails on the missing file
         # rather than partway through a universe sweep. `info` and `view` are
-        # exempt: yfinance and the local bar cache work without an account.
-        if args.command not in {"info", "view"}:
+        # exempt: yfinance and the local bar cache work without an account, and
+        # `accuracy` only ever reads a CSV off disk.
+        if args.command not in {"info", "view", "accuracy"}:
             _, warning = config.load_credentials()
             if warning:
                 ui.warn(warning)

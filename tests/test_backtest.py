@@ -82,6 +82,32 @@ def test_slicing_refuses_when_there_is_not_enough_history():
     assert slice_at(frame, i=19, lookback=20, horizon=5) is not None
 
 
+def test_the_prior_return_mirrors_the_forward_one_on_the_past_side():
+    """The momentum baseline spans i-horizon to i, never past the as-of bar."""
+    frame = make_frame([100.0] * 45 + [110.0] * 5 + [200.0] * 50)
+    # Row 49 is the last 110.0; five rows earlier is 100.0, five later is 200.0.
+    window = slice_at(frame, i=49, lookback=20, horizon=5)
+
+    assert window.prior_return == pytest.approx(0.10)
+    assert window.forward_return == pytest.approx(200.0 / 110.0 - 1.0)
+
+
+def test_the_prior_return_cannot_see_the_future_that_judges_it():
+    """A crash after the as-of row must leave the trailing return untouched."""
+    frame = make_frame([100.0] * 60 + [10.0] * 40)
+    window = slice_at(frame, i=59, lookback=30, horizon=5)
+
+    assert window.prior_return == pytest.approx(0.0)  # flat before the crash
+    assert window.forward_return == pytest.approx(-0.90)
+
+
+def test_a_history_shorter_than_the_horizon_reports_no_prior_return():
+    frame = make_frame(np.arange(1, 101, dtype="float64"))
+    window = slice_at(frame, i=60, lookback=3, horizon=5)
+
+    assert window.prior_return == 0.0
+
+
 def test_non_positive_prices_are_refused():
     frame = make_frame([100.0] * 30 + [0.0] + [100.0] * 20)
     assert slice_at(frame, i=30, lookback=20, horizon=5) is None  # as-of close is 0

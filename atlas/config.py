@@ -169,6 +169,39 @@ BUY_MIN_P_UP = 0.60
 AVOID_MAX_MU = 0.0
 
 # --------------------------------------------------------------------------
+# Accuracy -- the pre-registered bar for believing the model
+# --------------------------------------------------------------------------
+#
+# Fixed on 2026-08-07, **before** the backtest that would be judged against
+# them, and that ordering is the entire point. Three runs had already returned
+# null (daily IC -0.008 and -0.0076, intraday +0.026, none distinguishable from
+# luck); with the bar set afterwards, a fourth run is not evidence, it is
+# re-rolling until something looks positive.
+#
+# Loosening any of these is a legitimate decision, but it should be a visible
+# commit with an argument attached -- not a quiet edit after seeing a result.
+
+#: Printed with every verdict, so the "fixed beforehand" claim is checkable
+#: against the commit date rather than taken on trust.
+ACCURACY_FIXED_ON = "2026-08-07"
+#: Two-sided p for the directional hit rate against a coin flip. Deliberately
+#: stricter than the conventional 0.05: every bias in the backtest -- absent
+#: delistings, no transaction costs, one market regime -- pushes results upward,
+#: so a marginal pass is more likely bias than skill.
+ACCURACY_MAX_DIRECTION_P = 0.01
+#: Empirical p for the mean rank IC against scores shuffled within each date.
+#: Left at 0.05 because the permutation null already prices in the sample's own
+#: structure, so it needs less of a safety margin than the binomial test.
+ACCURACY_MAX_PERMUTATION_P = 0.05
+#: Must the ranking beat the trailing-return baseline to count as a pass?
+#: True: momentum costs a subtraction and the model costs ~2.5s per symbol-date,
+#: so matching it is not a result. Ties go against the model.
+ACCURACY_MUST_BEAT_MOMENTUM = True
+#: No verdict at all below this many observations. At 20 dates x 30 symbols the
+#: per-date IC is still noisy enough that one date moves the mean materially.
+ACCURACY_MIN_OBSERVATIONS = 100
+
+# --------------------------------------------------------------------------
 # Trading
 # --------------------------------------------------------------------------
 
