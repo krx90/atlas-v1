@@ -14,6 +14,7 @@ discards and refetches everything to correct that.
 
 from __future__ import annotations
 
+import math
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
@@ -195,8 +196,20 @@ def bar_counts(conn: sqlite3.Connection, symbols: list[str]) -> dict[str, int]:
 # it was actually trained on is the natural next experiment, so intraday bars
 # get their own cache alongside the daily one.
 
-#: Supported intraday timeframes and their regular-session bar count.
-INTRADAY_TIMEFRAMES = {"5Min": 78, "15Min": 26, "1Hour": 7}
+#: Supported intraday timeframes and their regular-session bar count, as
+#: measured against live Alpaca data -- not as arithmetic on session length.
+#:
+#: `1Hour` is 6, not the 7 that 09:30-16:00 suggests, because Alpaca aligns
+#: hourly bars to the *clock hour*: a session returns 09:00, 10:00 ... 15:00.
+#: The 09:00 bar spans 09:00-10:00, so half of it is premarket, and
+#: `regular_session` drops it. That loses the opening 09:30-10:00 window
+#: entirely -- a real cost of this timeframe, and the reason 30Min (which lands
+#: exactly on 09:30) is the better-behaved intraday choice.
+INTRADAY_TIMEFRAMES = {"5Min": 78, "15Min": 26, "30Min": 13, "1Hour": 6}
+
+#: Extra calendar days fetched beyond the arithmetic minimum, to absorb market
+#: holidays and half-days. Roughly 7/5 covers weekends; this is on top.
+INTRADAY_FETCH_SLACK = 1.25
 
 #: Regular US session in exchange-local time. Alpaca returns extended-hours
 #: bars by default and they are ~59% of the rows -- thin, wide-spread, and
@@ -213,6 +226,36 @@ def _timeframe(label: str):
         return TimeFrame.Hour
     minutes = int(label.replace("Min", ""))
     return TimeFrame(minutes, TimeFrameUnit.Minute)
+
+
+def fetch_days_for(timeframe: str, bars_needed: int) -> int:
+    """Calendar days to request so `bars_needed` regular-session bars come back.
+
+    Fetching is specified in calendar days but the model needs a count of
+    *session* bars, and the two differ by weekends and holidays. Getting this
+    wrong is quiet: too short a window returns fewer bars than the lookback
+    needs and every symbol is skipped as "insufficient history" without ever
+    saying the fetch was the problem.
+    """
+    per_session = INTRADAY_TIMEFRAMES[timeframe]
+    sessions = math.ceil(bars_needed / per_session)
+    return int(math.ceil(sessions * (7 / 5) * INTRADAY_FETCH_SLACK)) + 5
+
+
+def bars_per_day(frame: pd.DataFrame) -> float:
+    """Mean regular-session bars per trading day in `frame`.
+
+    The cheapest check that session filtering actually happened: compare it
+    against `INTRADAY_TIMEFRAMES`. Unfiltered data runs 04:00-20:00 and returns
+    roughly 2.5x as many bars, which otherwise just looks like generous history.
+    """
+    if frame.empty:
+        return 0.0
+    index = frame.index
+    if index.tz is None:
+        index = index.tz_localize("UTC")
+    local = index.tz_convert("America/New_York")
+    return len(frame) / max(1, len(set(local.date)))
 
 
 def regular_session(frame: pd.DataFrame) -> pd.DataFrame:

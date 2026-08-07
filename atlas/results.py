@@ -38,6 +38,8 @@ _COMMON = [
     "sigma_pct",
     "sharpe",
     "mu_vol_ratio",
+    "realized_vol_pct",
+    "sigma_vol_ratio",
 ]
 _TRAILER = ["horizon_days", "paths", "paths_used", "model", "scanned_at"]
 
@@ -67,6 +69,8 @@ def _row(index: int, score: Score, name: str, horizon: int, paths: int, model: s
         "sigma_pct": f"{score.sigma * 100:.3f}",
         "sharpe": f"{score.sharpe:.4f}",
         "mu_vol_ratio": f"{score.mu_vol_ratio:.2f}",
+        "realized_vol_pct": f"{score.realized_vol * 100:.3f}",
+        "sigma_vol_ratio": f"{score.sigma_vol_ratio:.2f}",
         "p_up": f"{score.p_up:.3f}",
         "q05_pct": f"{score.q05 * 100:.3f}",
         "mdd_pct": f"{score.mdd * 100:.3f}",
@@ -138,6 +142,43 @@ def write(
     _write_atomic(archive, archive_rows, ARCHIVE_FIELDS)
 
     return written, archive
+
+
+#: Per-symbol diagnostic columns, written for every symbol the model returned --
+#: rejected ones included, which is the whole point of the file.
+HEALTH_FIELDS = [
+    "symbol", "mu_pct", "sigma_pct", "realized_vol_pct",
+    "mu_vol_ratio", "sigma_vol_ratio", "paths_used", "paths_total",
+    "rejected", "reason",
+]
+
+
+def write_health(entries, *, timeframe: str | None, horizon: int) -> Path:
+    """Archive per-symbol forecast health for one run.
+
+    Named by timeframe and timestamp so a 1Hour run and its daily comparison
+    sit side by side and can be diffed, rather than one overwriting the other.
+    """
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    tag = timeframe or "1Day"
+    path = config.DATA_DIR / f"scan_health_{tag}_{horizon}bar_{stamp}.csv"
+    rows = [
+        {
+            "symbol": e.symbol,
+            "mu_pct": f"{e.mu * 100:.3f}",
+            "sigma_pct": f"{e.sigma * 100:.3f}",
+            "realized_vol_pct": f"{e.realized_vol * 100:.3f}",
+            "mu_vol_ratio": f"{e.mu_vol_ratio:.3f}",
+            "sigma_vol_ratio": f"{e.sigma_vol_ratio:.3f}",
+            "paths_used": e.paths_used,
+            "paths_total": e.paths_total,
+            "rejected": int(e.rejected),
+            "reason": e.reason,
+        }
+        for e in sorted(entries, key=lambda e: e.symbol)
+    ]
+    _write_atomic(path, rows, HEALTH_FIELDS)
+    return path
 
 
 def write_skipped(entries: list[tuple[str, str]]) -> Path | None:

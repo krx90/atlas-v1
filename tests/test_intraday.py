@@ -88,22 +88,54 @@ def test_multiple_sessions_each_keep_their_own_window():
 
 
 @pytest.mark.parametrize(
-    ("label", "expected_per_session"),
-    [("5Min", 78), ("15Min", 26), ("1Hour", 7)],
+    ("label", "freq", "expected_per_session"),
+    [("5Min", "5min", 78), ("15Min", "15min", 26), ("30Min", "30min", 13), ("1Hour", "60min", 6)],
 )
-def test_declared_bar_counts_match_a_real_session(label, expected_per_session):
+def test_declared_bar_counts_match_a_real_session(label, freq, expected_per_session):
+    """Exact, not approximate. The count is what verifies the session filter ran.
+
+    An earlier version of this test allowed a tolerance of one, which is what
+    let `1Hour` be declared as 7 when both this fixture and live Alpaca data
+    yield 6 -- hourly bars are aligned to the clock hour, so the 09:00 bar
+    straddles the open and is dropped. A tolerance here hides exactly the kind
+    of off-by-one the constant exists to catch.
+    """
     assert INTRADAY_TIMEFRAMES[label] == expected_per_session
-    freq = {"5Min": "5min", "15Min": "15min", "1Hour": "60min"}[label]
-    kept = regular_session(intraday_frame(freq=freq))
-    # Hourly bars start on the hour, so 09:30-15:55 yields 09:00..15:00 stamps
-    # that fall inside the window; allow the boundary to differ by one.
-    assert abs(len(kept) - expected_per_session) <= 1
+    assert len(regular_session(intraday_frame(freq=freq))) == expected_per_session
+
+
+def test_the_hourly_open_bar_is_dropped_because_it_straddles_the_open():
+    """09:00-10:00 is half premarket, so the session's first kept bar is 10:00."""
+    kept = regular_session(intraday_frame(freq="60min")).tz_convert("America/New_York")
+    assert kept.index.min().strftime("%H:%M") == "10:00"
+    assert "09:00" not in set(kept.index.strftime("%H:%M"))
 
 
 def test_timeframe_labels_map_to_alpaca_objects():
     assert _timeframe("5Min").amount == 5
     assert _timeframe("15Min").amount == 15
+    assert _timeframe("30Min").amount == 30
     assert _timeframe("1Hour").amount == 1
+
+
+def test_fetch_windows_cover_the_bars_they_promise():
+    """Too short a window skips every symbol as 'insufficient history'."""
+    from atlas.bars import fetch_days_for
+
+    for label, per_session in INTRADAY_TIMEFRAMES.items():
+        days = fetch_days_for(label, 510)
+        sessions = days * (5 / 7)  # calendar days -> trading days
+        assert sessions * per_session >= 510, f"{label}: {days}d is too short"
+
+
+def test_bars_per_day_detects_an_unfiltered_cache():
+    """The one cheap check that extended-hours rows did not get in."""
+    from atlas.bars import bars_per_day
+
+    frame = intraday_frame(freq="60min")
+    assert bars_per_day(regular_session(frame)) == 6
+    # Unfiltered, 04:00-19:55 hourly is 16 bars -- far above the expected 6.
+    assert bars_per_day(frame) == 16
 
 
 def test_an_unknown_timeframe_is_refused():
